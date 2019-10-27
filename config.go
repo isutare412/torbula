@@ -37,7 +37,11 @@ func parseConfig(file string) error {
 		}
 		path := value.String()
 		if filepath.IsAbs(path) {
-			return "", fmt.Errorf("%s=%q, the path should be relative", key, path)
+			return path, nil
+		}
+		path, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
 		}
 		return path, nil
 	}

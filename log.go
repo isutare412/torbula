@@ -22,7 +22,13 @@ func logInit(path string) error {
 	}
 
 	logger.path = path
-	logger.file, err = dailyrotate.NewFile(filepath.Join(path, "2006-01-02.log"), nil)
+	logger.file, err = dailyrotate.NewFileWithPathGenerator(
+		func(t time.Time) string {
+			time := t.Format("2006-01-02") + ".log"
+			return filepath.Join(path, time)
+		},
+		nil,
+	)
 	if err != nil {
 		return fmt.Errorf("init logger: %v", err)
 	}

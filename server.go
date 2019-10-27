@@ -15,13 +15,13 @@ type Server struct {
 	// downloads torrents with torrentClient
 	torrentClient *torrent.Client
 
-	// torrent files are read from pathSrc
-	pathSrc string
-	// torrents are downloaded into pathTmp
-	pathTmp string
-	// download completed files are moved from pathTmp to pathDst
-	pathDst string
+	// absolute path. for internal usage.
+	pathSrc  string
+	pathTmp  string
+	pathDst  string
+	pathHome string
 
+	// seeding time since download has completed.
 	seedTime time.Duration
 
 	mu      sync.Mutex
@@ -59,6 +59,9 @@ func (s *Server) ready() error {
 	if err := makedirs(s.pathSrc, s.pathTmp, s.pathDst); err != nil {
 		return err
 	}
+	if err := os.Chdir(s.pathTmp); err != nil {
+		return fmt.Errorf("failed ready: %s", err)
+	}
 	return nil
 }
 
@@ -88,7 +91,7 @@ func (s *Server) detect() error {
 			}
 
 			if id, ok := s.Add(path); ok {
-				logAlways("detected: %s", path)
+				logAlways("detected: %q", path)
 				s.detected <- id
 			}
 			return nil
@@ -111,8 +114,8 @@ func (s *Server) download() {
 			logWarning("failed to download: %s", err)
 			continue
 		}
-		t.DownloadAll()
-		logAlways("start download: %q", t.Name())
+			t.DownloadAll()
+			logAlways("start download: %q", t.Name())
 	}
 }
 
@@ -164,12 +167,18 @@ func NewServer(iniFile string) (*Server, error) {
 		return nil, err
 	}
 
+	curDir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
 	var config = &defaultConfig
 	return &Server{
 		torrentClient: client,
 		pathSrc:       config.pathSrc,
 		pathTmp:       config.pathTmp,
 		pathDst:       config.pathDst,
+		pathHome:      curDir,
 		seedTime:      config.seedTime,
 		onGoing:       make(map[uint64]*progress),
 		detected:      make(chan uint64),
