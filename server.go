@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
@@ -24,10 +23,8 @@ type Server struct {
 	// seeding time since download has completed.
 	seedTime time.Duration
 
-	mu      sync.Mutex
-	onGoing map[uint64]*progress
-
-	detected chan uint64
+	pool     progressPool
+	detected chan progID
 }
 
 // Run start s and block. Run stops only if error occured.
@@ -90,7 +87,7 @@ func (s *Server) detect() error {
 				return nil
 			}
 
-			if id, ok := s.Add(path); ok {
+			if id, ok := s.pool.newProgress(path); ok {
 				logAlways("detected: %q", path)
 				s.detected <- id
 			}
@@ -104,7 +101,7 @@ func (s *Server) detect() error {
 
 func (s *Server) download() {
 	for id := range s.detected {
-		path, ok := s.Path(id)
+		path, ok := s.pool.path(id)
 		if !ok {
 			logWarning("failed to download: id(%d) not found", id)
 			continue
@@ -115,61 +112,14 @@ func (s *Server) download() {
 			continue
 		}
 
-		go func(id uint64) {
+		go func(id progID) {
 			<-t.GotInfo()
 			t.DownloadAll()
-			s.SetState(id, downloading)
+			s.pool.setHash(id, t.InfoHash())
+			s.pool.setState(id, downloading)
 			logAlways("start download: %q", t.Name())
 		}(id)
 	}
-}
-
-// Has checks path is managed by Server. Returns progress id if exists.
-func (s *Server) Has(path string) (uint64, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, p := range s.onGoing {
-		if p.path == path {
-			return p.id, true
-		}
-	}
-	return 0, false
-}
-
-// Path returns relative filepath of a progress with id.
-func (s *Server) Path(id uint64) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if p, ok := s.onGoing[id]; ok {
-		return p.path, true
-	}
-	return "", false
-}
-
-// Add adds path to onGoing, which manages download status.
-// Returns false if path already exists. Always returns progress id.
-func (s *Server) Add(path string) (uint64, bool) {
-	if id, ok := s.Has(path); ok {
-		return id, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p := newProgress()
-	p.state = detected
-	p.path = path
-	s.onGoing[p.id] = p
-	return p.id, true
-}
-
-// SetState changes state of a prgroess with id. Returns false if no exists.
-func (s *Server) SetState(id uint64, st state) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.onGoing[id]; !ok {
-		return false
-	}
-	s.onGoing[id].state = st
-	return true
 }
 
 // NewServer create server instance from iniFile
@@ -196,7 +146,7 @@ func NewServer(iniFile string) (*Server, error) {
 		pathDst:       config.pathDst,
 		pathHome:      curDir,
 		seedTime:      config.seedTime,
-		onGoing:       make(map[uint64]*progress),
-		detected:      make(chan uint64),
+		detected:      make(chan progID),
+		pool:          progressPool{pros: make(map[progID]*progress)},
 	}, nil
 }
