@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
@@ -21,6 +22,7 @@ type Server struct {
 	// download completed files are moved from pathTmp to pathDst
 	pathDst string
 
+	mu      sync.Mutex
 	onGoing map[uint64]*progress
 }
 
@@ -45,18 +47,17 @@ func (s *Server) Run() error {
 		return err
 	}
 
+	s.startDetect()
+	return nil
+}
+
+func (s *Server) startDetect() {
 	tick := time.Tick(500 * time.Millisecond)
 	for {
 		select {
 		case <-tick:
-			s.tick()
+			s.detect()
 		}
-	}
-}
-
-func (s *Server) tick() {
-	if err := s.detect(); err != nil {
-		logWarning("%s", err)
 	}
 }
 
@@ -70,24 +71,42 @@ func (s *Server) detect() error {
 			if info.IsDir() || !isTorrent(info.Name()) {
 				return nil
 			}
-			for _, p := range s.onGoing {
-				if p.path == path {
-					// already detected
-					return nil
-				}
-			}
 
-			p := newProgress()
-			p.state = detected
-			p.path = path
-			s.onGoing[p.id] = p
-			logAlways("detected: %s", path)
+			if s.Add(path) {
+				logAlways("detected: %s", path)
+			}
 			return nil
 		})
 	if err != nil {
 		return fmt.Errorf("failed detect: %s", err)
 	}
 	return nil
+}
+
+// Has checks path is managed by Server.
+func (s *Server) Has(path string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.onGoing {
+		if p.path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// Add adds path to onGoing, which manages download status.
+func (s *Server) Add(path string) bool {
+	if s.Has(path) {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := newProgress()
+	p.state = detected
+	p.path = path
+	s.onGoing[p.id] = p
+	return true
 }
 
 // NewServer create server instance from iniFile
