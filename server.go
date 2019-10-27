@@ -114,8 +114,13 @@ func (s *Server) download() {
 			logWarning("failed to download: %s", err)
 			continue
 		}
+
+		go func(id uint64) {
+			<-t.GotInfo()
 			t.DownloadAll()
+			s.SetState(id, downloading)
 			logAlways("start download: %q", t.Name())
+		}(id)
 	}
 }
 
@@ -154,6 +159,17 @@ func (s *Server) Add(path string) (uint64, bool) {
 	p.path = path
 	s.onGoing[p.id] = p
 	return p.id, true
+}
+
+// SetState changes state of a prgroess with id. Returns false if no exists.
+func (s *Server) SetState(id uint64, st state) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.onGoing[id]; !ok {
+		return false
+	}
+	s.onGoing[id].state = st
+	return true
 }
 
 // NewServer create server instance from iniFile
