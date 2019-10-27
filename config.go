@@ -3,16 +3,18 @@ package torbula
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/ini.v1"
 )
 
 // Config is parsed result of the ini file
 type config struct {
-	PathSrc string
-	PathTmp string
-	PathDst string
-	PathLog string
+	pathSrc  string
+	pathTmp  string
+	pathDst  string
+	pathLog  string
+	seedTime time.Duration
 }
 
 var defaultConfig config
@@ -40,20 +42,39 @@ func parseConfig(file string) error {
 		return path, nil
 	}
 
+	getDuration := func(key string, def time.Duration) (dur time.Duration, err error) {
+		if !section.HasKey(key) {
+			return def, nil
+		}
+		value, err := section.GetKey(key)
+		if err != nil {
+			return dur, err
+		}
+		dur, err = time.ParseDuration(value.String())
+		if err != nil {
+			return def, err
+		}
+		return dur, nil
+	}
+
 	var config = &defaultConfig
-	config.PathSrc, err = getPath("src_dir")
+	config.pathSrc, err = getPath("src_dir")
 	if err != nil {
 		return err
 	}
-	config.PathTmp, err = getPath("tmp_dir")
+	config.pathTmp, err = getPath("tmp_dir")
 	if err != nil {
 		return err
 	}
-	config.PathDst, err = getPath("dst_dir")
+	config.pathDst, err = getPath("dst_dir")
 	if err != nil {
 		return err
 	}
-	config.PathLog, err = getPath("log_dir")
+	config.pathLog, err = getPath("log_dir")
+	if err != nil {
+		return err
+	}
+	config.seedTime, err = getDuration("seed_time", 6*time.Hour)
 	if err != nil {
 		return err
 	}

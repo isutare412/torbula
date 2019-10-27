@@ -22,6 +22,8 @@ type Server struct {
 	// download completed files are moved from pathTmp to pathDst
 	pathDst string
 
+	seedTime time.Duration
+
 	mu      sync.Mutex
 	onGoing map[uint64]*progress
 
@@ -41,7 +43,7 @@ func (s *Server) Run() error {
 }
 
 func (s *Server) ready() error {
-	if err := logInit(defaultConfig.PathLog); err != nil {
+	if err := logInit(defaultConfig.pathLog); err != nil {
 		return err
 	}
 
@@ -165,9 +167,10 @@ func NewServer(iniFile string) (*Server, error) {
 	var config = &defaultConfig
 	return &Server{
 		torrentClient: client,
-		pathSrc:       config.PathSrc,
-		pathTmp:       config.PathTmp,
-		pathDst:       config.PathDst,
+		pathSrc:       config.pathSrc,
+		pathTmp:       config.pathTmp,
+		pathDst:       config.pathDst,
+		seedTime:      config.seedTime,
 		onGoing:       make(map[uint64]*progress),
 		detected:      make(chan uint64),
 	}, nil
