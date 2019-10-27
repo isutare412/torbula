@@ -21,7 +21,7 @@ type Server struct {
 	// download completed files are moved from pathTmp to pathDst
 	pathDst string
 
-	onGoing map[string]progress
+	onGoing map[uint64]*progress
 }
 
 // Run start s and block. Run stops only if error occured.
@@ -70,12 +70,17 @@ func (s *Server) detect() error {
 			if info.IsDir() || !isTorrent(info.Name()) {
 				return nil
 			}
-			if _, ok := s.onGoing[path]; ok {
-				// already detected
-				return nil
+			for _, p := range s.onGoing {
+				if p.path == path {
+					// already detected
+					return nil
+				}
 			}
 
-			s.onGoing[path] = progress{state: detected, path: path}
+			p := newProgress()
+			p.state = detected
+			p.path = path
+			s.onGoing[p.id] = p
 			logAlways("detected: %s", path)
 			return nil
 		})
@@ -102,6 +107,6 @@ func NewServer(iniFile string) (*Server, error) {
 		pathSrc:       config.PathSrc,
 		pathTmp:       config.PathTmp,
 		pathDst:       config.PathDst,
-		onGoing:       make(map[string]progress),
+		onGoing:       make(map[uint64]*progress),
 	}, nil
 }
