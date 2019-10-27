@@ -29,7 +29,15 @@ type Server struct {
 // Run start s and block. Run stops only if error occured.
 func (s *Server) Run() error {
 	defer s.torrentClient.Close()
+	if err := s.ready(); err != nil {
+		return err
+	}
 
+	s.startDetect()
+	return nil
+}
+
+func (s *Server) ready() error {
 	if err := logInit(defaultConfig.PathLog); err != nil {
 		return err
 	}
@@ -46,8 +54,6 @@ func (s *Server) Run() error {
 	if err := makedirs(s.pathSrc, s.pathTmp, s.pathDst); err != nil {
 		return err
 	}
-
-	s.startDetect()
 	return nil
 }
 
