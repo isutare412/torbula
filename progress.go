@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/anacrolix/torrent"
 )
@@ -27,6 +28,10 @@ type progress struct {
 	state
 	path string
 	hash torrent.InfoHash
+
+	start    time.Time
+	end      time.Time
+	finished bool
 }
 
 func newProgress() *progress {
@@ -70,6 +75,15 @@ func (pp *progressPool) hasPath(path string) bool {
 	return false
 }
 
+func (pp *progressPool) finished(id progID) bool {
+	if !pp.hasID(id) {
+		return false
+	}
+	pp.Lock()
+	defer pp.Unlock()
+	return pp.pros[id].finished
+}
+
 func (pp *progressPool) path(id progID) (string, bool) {
 	if !pp.hasID(id) {
 		return "", false
@@ -77,6 +91,33 @@ func (pp *progressPool) path(id progID) (string, bool) {
 	pp.Lock()
 	defer pp.Unlock()
 	return pp.pros[id].path, true
+}
+
+func (pp *progressPool) hash(id progID) (torrent.InfoHash, bool) {
+	if !pp.hasID(id) {
+		return torrent.InfoHash{}, false
+	}
+	pp.Lock()
+	defer pp.Unlock()
+	return pp.pros[id].hash, true
+}
+
+func (pp *progressPool) sinceEnd(id progID) (time.Duration, bool) {
+	if !pp.finished(id) {
+		return 0, false
+	}
+	return time.Since(pp.pros[id].end), true
+}
+
+func (pp *progressPool) findByHash(h torrent.InfoHash) (progID, bool) {
+	pp.Lock()
+	defer pp.Unlock()
+	for _, p := range pp.pros {
+		if p.hash == h {
+			return p.progID, true
+		}
+	}
+	return 0, false
 }
 
 func (pp *progressPool) progress(id progID) (progress, bool) {
@@ -106,6 +147,25 @@ func (pp *progressPool) setHash(id progID, h torrent.InfoHash) bool {
 	defer pp.Unlock()
 	pp.pros[id].hash = h
 	return true
+}
+
+func (pp *progressPool) setStart(id progID) {
+	if !pp.hasID(id) {
+		return
+	}
+	pp.Lock()
+	defer pp.Unlock()
+	pp.pros[id].start = time.Now()
+}
+
+func (pp *progressPool) setEnd(id progID) {
+	if !pp.hasID(id) {
+		return
+	}
+	pp.Lock()
+	defer pp.Unlock()
+	pp.pros[id].end = time.Now()
+	pp.pros[id].finished = true
 }
 
 func isTorrent(file string) bool {

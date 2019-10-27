@@ -25,6 +25,7 @@ type Server struct {
 
 	pool     progressPool
 	detected chan progID
+	todrop   chan torrent.InfoHash
 }
 
 // Run start Server and block. Run stops only if error occured.
@@ -34,7 +35,9 @@ func (s *Server) Run() error {
 		return err
 	}
 
-	go s.download()
+	go s.downloadStart()
+	go s.downloadEnd()
+	go s.drop()
 	s.detect()
 	return nil
 }
@@ -63,7 +66,7 @@ func (s *Server) ready() error {
 }
 
 func (s *Server) detect() {
-	tick := time.Tick(500 * time.Millisecond)
+	tick := time.Tick(1 * time.Second)
 	for {
 		select {
 		case <-tick:
@@ -82,7 +85,8 @@ func (s *Server) detect() {
 						s.detected <- id
 					}
 					return nil
-				})
+				},
+			)
 			if err != nil {
 				logWarning("%s", err)
 				continue
@@ -91,7 +95,7 @@ func (s *Server) detect() {
 	}
 }
 
-func (s *Server) download() {
+func (s *Server) downloadStart() {
 	for id := range s.detected {
 		path, ok := s.pool.path(id)
 		if !ok {
@@ -109,8 +113,64 @@ func (s *Server) download() {
 			t.DownloadAll()
 			s.pool.setHash(id, t.InfoHash())
 			s.pool.setState(id, downloading)
-			logAlways("start download: %q", t.Name())
+			s.pool.setStart(id)
+			logAlways("start download: %v", t)
 		}(id)
+	}
+}
+
+func (s *Server) downloadEnd() {
+	tick := time.Tick(2 * time.Second)
+	for {
+		select {
+		case <-tick:
+			var dropped []torrent.InfoHash
+			for _, t := range s.torrentClient.Torrents() {
+				if t.BytesCompleted() < t.Length() {
+					continue
+				}
+				hash := t.InfoHash()
+				id, ok := s.pool.findByHash(hash)
+				if !ok {
+					logWarning("downloadEnd failed: progress not found: %q", t)
+					continue
+				}
+				if !s.pool.finished(id) {
+					s.pool.setEnd(id)
+				}
+
+				duration, ok := s.pool.sinceEnd(id)
+				if !ok {
+					logWarning("downloadEnd failed: duration is invalid: %q", t)
+					continue
+				}
+				if duration >= s.seedTime {
+					dropped = append(dropped, hash)
+				}
+			}
+
+			for _, h := range dropped {
+				s.todrop <- h
+			}
+		}
+	}
+}
+
+func (s *Server) drop() {
+	for hash := range s.todrop {
+		id, ok := s.pool.findByHash(hash)
+		if !ok {
+			logWarning("drop failed: progress not found: hash(%v)", hash)
+			continue
+		}
+		t, ok := s.torrentClient.Torrent(hash)
+		if !ok {
+			logWarning("drop failed: torrent not found: id(%d) hash(%v)", id, hash)
+			continue
+		}
+		name := t.Name()
+		t.Drop()
+		logAlways("dropped torrent: %q", name)
 	}
 }
 
@@ -120,7 +180,13 @@ func NewServer(iniFile string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := torrent.NewClient(nil)
+
+	var config = &defaultConfig
+	tconf := torrent.NewDefaultClientConfig()
+	if config.seedTime > 0 {
+		tconf.Seed = true
+	}
+	client, err := torrent.NewClient(tconf)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +196,6 @@ func NewServer(iniFile string) (*Server, error) {
 		return nil, err
 	}
 
-	var config = &defaultConfig
 	return &Server{
 		torrentClient: client,
 		pathSrc:       config.pathSrc,
@@ -139,6 +204,7 @@ func NewServer(iniFile string) (*Server, error) {
 		pathHome:      curDir,
 		seedTime:      config.seedTime,
 		detected:      make(chan progID),
+		todrop:        make(chan torrent.InfoHash),
 		pool:          progressPool{pros: make(map[progID]*progress)},
 	}, nil
 }
