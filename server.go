@@ -24,6 +24,8 @@ type Server struct {
 
 	mu      sync.Mutex
 	onGoing map[uint64]*progress
+
+	detected chan uint64
 }
 
 // Run start s and block. Run stops only if error occured.
@@ -33,6 +35,7 @@ func (s *Server) Run() error {
 		return err
 	}
 
+	go s.download()
 	s.startDetect()
 	return nil
 }
@@ -62,7 +65,11 @@ func (s *Server) startDetect() {
 	for {
 		select {
 		case <-tick:
-			s.detect()
+			err := s.detect()
+			if err != nil {
+				logWarning("%s", err)
+				continue
+			}
 		}
 	}
 }
@@ -78,8 +85,9 @@ func (s *Server) detect() error {
 				return nil
 			}
 
-			if s.Add(path) {
+			if id, ok := s.Add(path); ok {
 				logAlways("detected: %s", path)
+				s.detected <- id
 			}
 			return nil
 		})
@@ -89,22 +97,50 @@ func (s *Server) detect() error {
 	return nil
 }
 
-// Has checks path is managed by Server.
-func (s *Server) Has(path string) bool {
+func (s *Server) download() {
+	for id := range s.detected {
+		path, ok := s.Path(id)
+		if !ok {
+			logWarning("failed to download: id(%d) not found", id)
+			continue
+		}
+		t, err := s.torrentClient.AddTorrentFromFile(path)
+		if err != nil {
+			logWarning("failed to download: %s", err)
+			continue
+		}
+		t.DownloadAll()
+		logAlways("start download: %q", t.Name())
+	}
+}
+
+// Has checks path is managed by Server. Returns progress id if exists.
+func (s *Server) Has(path string) (uint64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.onGoing {
 		if p.path == path {
-			return true
+			return p.id, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+// Path returns relative filepath of a progress with id.
+func (s *Server) Path(id uint64) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.onGoing[id]; ok {
+		return p.path, true
+	}
+	return "", false
 }
 
 // Add adds path to onGoing, which manages download status.
-func (s *Server) Add(path string) bool {
-	if s.Has(path) {
-		return false
+// Returns false if path already exists. Always returns progress id.
+func (s *Server) Add(path string) (uint64, bool) {
+	if id, ok := s.Has(path); ok {
+		return id, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -112,7 +148,7 @@ func (s *Server) Add(path string) bool {
 	p.state = detected
 	p.path = path
 	s.onGoing[p.id] = p
-	return true
+	return p.id, true
 }
 
 // NewServer create server instance from iniFile
@@ -133,5 +169,6 @@ func NewServer(iniFile string) (*Server, error) {
 		pathTmp:       config.PathTmp,
 		pathDst:       config.PathDst,
 		onGoing:       make(map[uint64]*progress),
+		detected:      make(chan uint64),
 	}, nil
 }
