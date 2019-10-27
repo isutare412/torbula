@@ -27,7 +27,7 @@ type Server struct {
 	detected chan progID
 }
 
-// Run start s and block. Run stops only if error occured.
+// Run start Server and block. Run stops only if error occured.
 func (s *Server) Run() error {
 	defer s.torrentClient.Close()
 	if err := s.ready(); err != nil {
@@ -35,7 +35,7 @@ func (s *Server) Run() error {
 	}
 
 	go s.download()
-	s.startDetect()
+	s.detect()
 	return nil
 }
 
@@ -62,41 +62,33 @@ func (s *Server) ready() error {
 	return nil
 }
 
-func (s *Server) startDetect() {
+func (s *Server) detect() {
 	tick := time.Tick(500 * time.Millisecond)
 	for {
 		select {
 		case <-tick:
-			err := s.detect()
+			err := filepath.Walk(
+				s.pathSrc,
+				func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return err
+					}
+					if info.IsDir() || !isTorrent(info.Name()) {
+						return nil
+					}
+
+					if id, ok := s.pool.newProgress(path); ok {
+						logAlways("detected: %q", path)
+						s.detected <- id
+					}
+					return nil
+				})
 			if err != nil {
 				logWarning("%s", err)
 				continue
 			}
 		}
 	}
-}
-
-func (s *Server) detect() error {
-	err := filepath.Walk(
-		s.pathSrc,
-		func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if info.IsDir() || !isTorrent(info.Name()) {
-				return nil
-			}
-
-			if id, ok := s.pool.newProgress(path); ok {
-				logAlways("detected: %q", path)
-				s.detected <- id
-			}
-			return nil
-		})
-	if err != nil {
-		return fmt.Errorf("failed detect: %s", err)
-	}
-	return nil
 }
 
 func (s *Server) download() {
