@@ -33,6 +33,7 @@ func logInit(path string) error {
 		return fmt.Errorf("init logger: %v", err)
 	}
 	logger.file.Location = time.Local
+	logger.file.Write([]byte{'\n'})
 	return nil
 }
 
