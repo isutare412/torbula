@@ -65,6 +65,16 @@ func (pp *progressPool) newProgress(path string) (progID, bool) {
 	return p.progID, true
 }
 
+func (pp *progressPool) erase(id progID) bool {
+	pp.Lock()
+	defer pp.Unlock()
+	if _, ok := pp.pros[id]; !ok {
+		return false
+	}
+	delete(pp.pros, id)
+	return true
+}
+
 func (pp *progressPool) hasID(id progID) bool {
 	pp.Lock()
 	defer pp.Unlock()

@@ -20,6 +20,9 @@ type Server struct {
 	pathDst  string
 	pathHome string
 
+	// a semaphore for pathSrc access right.
+	srcSem chan struct{}
+
 	// seeding time since download has completed.
 	seedTime time.Duration
 
@@ -112,6 +115,7 @@ func (s *Server) report() {
 
 func (s *Server) detect() {
 	for range time.Tick(1 * time.Second) {
+		s.srcSem <- struct{}{}
 		err := filepath.Walk(
 			s.pathSrc,
 			func(path string, info os.FileInfo, err error) error {
@@ -134,6 +138,7 @@ func (s *Server) detect() {
 			logWarning("%s", err)
 			continue
 		}
+		<-s.srcSem
 	}
 }
 
@@ -147,6 +152,7 @@ func (s *Server) downloadStart() {
 		t, err := s.torrentClient.AddTorrentFromFile(path)
 		if err != nil {
 			logWarning("failed to download: %s", err)
+			s.eraseProgress(id)
 			continue
 		}
 
@@ -211,7 +217,62 @@ func (s *Server) drop() {
 		}
 		t.Drop()
 		logAlways("dropped torrent: %q", t.Name())
+
+		compl := s.moveResult(t)
+		go func() {
+			select {
+			case success := <-compl:
+				if success {
+					s.eraseProgress(id)
+				}
+			}
+		}()
 	}
+}
+
+func (s *Server) moveResult(t *torrent.Torrent) <-chan bool {
+	var complete = make(chan bool)
+	go func() {
+		for _, f := range t.Files() {
+			dst := filepath.Join(s.pathDst, f.Path())
+			logAlways("move result: %q", dst)
+
+			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				logWarning("failed mkdir: %v", err)
+				continue
+			}
+			if err := os.Rename(f.Path(), dst); err != nil {
+				logWarning("failed move: %v", err)
+				continue
+			}
+		}
+
+		id, ok := s.pool.findByHash(t.InfoHash())
+		if !ok {
+			complete <- false
+			return
+		}
+		tpath, ok := s.pool.path(id)
+		if !ok {
+			complete <- false
+			return
+		}
+
+		s.srcSem <- struct{}{}
+		defer func() {
+			<-s.srcSem
+		}()
+		if err := os.Remove(tpath); err != nil {
+			complete <- false
+			return
+		}
+		complete <- true
+	}()
+	return complete
+}
+
+func (s *Server) eraseProgress(id progID) {
+	s.pool.erase(id)
 }
 
 // NewServer create server instance from iniFile
@@ -242,6 +303,7 @@ func NewServer(iniFile string) (*Server, error) {
 		pathTmp:       config.pathTmp,
 		pathDst:       config.pathDst,
 		pathHome:      curDir,
+		srcSem:        make(chan struct{}, 1),
 		seedTime:      config.seedTime,
 		detected:      make(chan progID),
 		todrop:        make(chan torrent.InfoHash),
