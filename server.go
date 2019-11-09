@@ -35,6 +35,7 @@ func (s *Server) Run() error {
 		return err
 	}
 
+	go s.report()
 	go s.downloadStart()
 	go s.downloadEnd()
 	go s.drop()
@@ -63,6 +64,50 @@ func (s *Server) ready() error {
 		return fmt.Errorf("failed ready: %s", err)
 	}
 	return nil
+}
+
+// report write managed torrent files to filesystem.
+func (s *Server) report() {
+	f, err := os.Create(filepath.Join(s.pathHome, "status.txt"))
+	if err != nil {
+		logWarning("report stopped: %v", err)
+		return
+	}
+	defer f.Close()
+
+	var printProgress = func(p *progress) {
+		var name string = filepath.Base(p.path)
+		var size string = "unknown"
+		var downloadRate float64
+		if p.state >= downloading {
+			name = p.name
+			size = byteFormat(float64(p.size), 2)
+			if t, _ := s.torrentClient.Torrent(p.hash); t != nil {
+				downloadRate = 100 * float64(t.BytesCompleted()) / float64(t.Length())
+			}
+		}
+		f.WriteString("---------------------------------------------------\n")
+		f.WriteString(fmt.Sprintf("%-6s: %s\n", "file", name))
+		f.WriteString(fmt.Sprintf("%-6s: %s\n", "size", size))
+		f.WriteString(fmt.Sprintf("%-6s: %s\n", "status", p.state))
+		if p.state < seedend {
+			f.WriteString(fmt.Sprintf("\t%s: %.1f%%\n", "download rate", downloadRate))
+		}
+	}
+
+	for range time.Tick(5 * time.Second) {
+		_, err := f.Seek(0, 0)
+		if err != nil {
+			logWarning("report stopped: %v", err)
+			break
+		}
+		err = f.Truncate(0)
+		if err != nil {
+			logWarning("report stopped: %v", err)
+			break
+		}
+		s.pool.forEach(printProgress)
+	}
 }
 
 func (s *Server) detect() {
@@ -108,7 +153,8 @@ func (s *Server) downloadStart() {
 		go func(id progID) {
 			<-t.GotInfo()
 			t.DownloadAll()
-			s.pool.setHash(id, t.InfoHash())
+			s.pool.setInfo(id, t)
+
 			s.pool.setState(id, downloading)
 			s.pool.setStart(id)
 			logAlways("start download: %v", t)

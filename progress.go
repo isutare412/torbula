@@ -1,8 +1,6 @@
 package torbula
 
 import (
-	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,11 +21,23 @@ const (
 	seedend
 )
 
+func (s state) String() string {
+	return [...]string{
+		"invalid",
+		"detected",
+		"downloading",
+		"seeding",
+		"completed",
+	}[s]
+}
+
 type progress struct {
 	progID
 	state
 	path string
+	name string
 	hash torrent.InfoHash
+	size int64
 
 	start    time.Time
 	end      time.Time
@@ -129,6 +139,14 @@ func (pp *progressPool) progress(id progID) (progress, bool) {
 	return *pp.pros[id], true
 }
 
+func (pp *progressPool) forEach(cb func(*progress)) {
+	pp.Lock()
+	defer pp.Unlock()
+	for _, p := range pp.pros {
+		cb(p)
+	}
+}
+
 func (pp *progressPool) setState(id progID, s state) bool {
 	if !pp.hasID(id) {
 		return false
@@ -139,13 +157,15 @@ func (pp *progressPool) setState(id progID, s state) bool {
 	return true
 }
 
-func (pp *progressPool) setHash(id progID, h torrent.InfoHash) bool {
-	if !pp.hasID(id) {
+func (pp *progressPool) setInfo(id progID, t *torrent.Torrent) bool {
+	if !pp.hasID(id) || t == nil {
 		return false
 	}
 	pp.Lock()
 	defer pp.Unlock()
-	pp.pros[id].hash = h
+	pp.pros[id].name = t.Name()
+	pp.pros[id].hash = t.InfoHash()
+	pp.pros[id].size = t.Length()
 	return true
 }
 
@@ -166,8 +186,4 @@ func (pp *progressPool) setEnd(id progID) {
 	defer pp.Unlock()
 	pp.pros[id].end = time.Now()
 	pp.pros[id].finished = true
-}
-
-func isTorrent(file string) bool {
-	return strings.ToLower(filepath.Ext(file)) == ".torrent"
 }
