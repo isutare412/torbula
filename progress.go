@@ -1,6 +1,7 @@
 package torbula
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -152,8 +153,17 @@ func (pp *progressPool) progress(id progID) (progress, bool) {
 func (pp *progressPool) forEach(cb func(*progress)) {
 	pp.Lock()
 	defer pp.Unlock()
-	for _, p := range pp.pros {
-		cb(p)
+
+	ids := make([]progID, 0, len(pp.pros))
+	for id := range pp.pros {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+
+	for _, id := range ids {
+		cb(pp.pros[id])
 	}
 }
 
