@@ -1,13 +1,14 @@
 # Torbula
 
-Torbula is file system based torrent client. It detects `torrent` files from
-specific directory and download them. When seeding is completed, Torbula then
-moves files to a final directory.
+Torbula is file system based torrent client implemented by Go. It detects
+`torrent` files from specific directory and download them. When seeding is
+completed, Torbula then moves files to a final directory. The torrent client
+used by Torbula is imported from [anacrolix/torrent](https://github.com/anacrolix/torrent).
 
 ## Installation
 
 ```
-go install github.com/isutare412/torbula/cmd/...
+go get github.com/isutare412/torbula/cmd/...
 ```
 
 ## How to use
