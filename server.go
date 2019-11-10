@@ -127,7 +127,11 @@ func (s *Server) detect() {
 				}
 
 				if id, ok := s.pool.newProgress(path); ok {
-					logAlways("detected: %q", path)
+					rpath, err := filepath.Rel(s.pathSrc, path)
+					if err != nil {
+						return err
+					}
+					logAlways("detected: %q", rpath)
 					s.pool.setState(id, detected)
 					s.detected <- id
 				}
@@ -230,18 +234,35 @@ func (s *Server) drop() {
 	}
 }
 
+func topmostPath(path string) string {
+	if filepath.IsAbs(path) {
+		return "/"
+	}
+	for {
+		parent := filepath.Dir(path)
+		if parent == "." {
+			break
+		}
+		path = parent
+	}
+	return path
+}
+
 func (s *Server) moveResult(t *torrent.Torrent) <-chan bool {
 	var complete = make(chan bool)
 	go func() {
+		dirs := make(map[string]bool)
 		for _, f := range t.Files() {
-			dst := filepath.Join(s.pathDst, f.Path())
-			logAlways("move result: %q", dst)
+			dirs[topmostPath(f.Path())] = true
 
+		}
+		for d := range dirs {
+			dst := filepath.Join(s.pathDst, d)
 			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 				logWarning("failed mkdir: %v", err)
 				continue
 			}
-			if err := os.Rename(f.Path(), dst); err != nil {
+			if err := os.Rename(d, dst); err != nil {
 				logWarning("failed move: %v", err)
 				continue
 			}
